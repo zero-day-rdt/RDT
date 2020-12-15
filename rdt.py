@@ -1,9 +1,5 @@
-import threading
-import time
-
 from USocket import UnreliableSocket
-from rdt_entity import RDTConnectionStatus, RDTEventType
-from rdt_event_loop import EventLoop, ServerEventLoop, ClientEventLoop
+from rdt_event_loop import *
 
 
 class RDTSocket(UnreliableSocket):
@@ -27,9 +23,8 @@ class RDTSocket(UnreliableSocket):
         self.debug = debug
         self.addr: (str, int) = None
         self.lock: threading.RLock = threading.RLock()
-        self.recv_buffer: bytearray = bytearray()
-        self._event_loop: EventLoop = None
-        self._status: RDTConnectionStatus = None
+        self.data: bytearray = bytearray()
+        self._event_loop = None
 
     def accept(self) -> ('RDTSocket', (str, int)):
         """
@@ -40,20 +35,20 @@ class RDTSocket(UnreliableSocket):
 
         This function should be blocking. 
         """
-        conn, remote = None, None
-        assert self._event_loop and isinstance(self._event_loop, ServerEventLoop), 'This socket is not listening'
-        while conn is None or remote is None:
-            conn, remote = self._event_loop.accept()
+        assert self._event_loop and isinstance(self._event_loop,
+                                               ServerEventLoop), 'This socket is not a listener, please bind'
+        while True:
+            s: SimpleRDT = self._event_loop.accept()
+            if s is not None:
+                return s, s.addr
             time.sleep(0.00001)
-
-        return conn, remote
 
     def connect(self, address: (str, int)):
         """
         Connect to a remote socket at address.
         Corresponds to the process of establishing a connection on the client side.
         """
-        assert not self._event_loop, 'Duplicated Connecting or Listening'
+        assert not self._event_loop, 'Duplicated connecting or it is listening'
         self._event_loop = ClientEventLoop(self, address)
         self._event_loop.start()
         self._event_loop.put(RDTEventType.CONNECT, None)
@@ -69,16 +64,17 @@ class RDTSocket(UnreliableSocket):
         it MUST NOT affect the data returned by this function.
         """
 
-        assert self._event_loop, "Connection not established yet."
+        assert self._event_loop and isinstance(self._event_loop,
+                                               ClientEventLoop), "Connection not established or it is the listener"
 
         current = time.time()
         timeout = super(RDTSocket, self).gettimeout()
         while time.time() - current < timeout:
             with self.lock:
-                recv_len = len(self.recv_buffer)
+                recv_len = len(self.data)
                 if recv_len > 0:
-                    re = self.recv_buffer[:bufsize]
-                    self.recv_buffer = self.recv_buffer[bufsize:]
+                    re = self.data[:bufsize]
+                    self.data = self.data[bufsize:]
                     return re
             time.sleep(0.00001)
 
@@ -89,8 +85,8 @@ class RDTSocket(UnreliableSocket):
         Send data to the socket. 
         The socket must be connected to a remote socket, i.e. self._send_to must not be none.
         """
-        assert self._event_loop, "Connection not established yet."
-        self._event_loop.put(RDTEventType.SEND, _bytes)
+        assert self._event_loop and isinstance(self._event_loop, ClientEventLoop), "Connection not established yet."
+        self._event_loop.put(RDTEventType.SEND, (self.addr, _bytes))
 
     def close(self):
         """
@@ -110,6 +106,54 @@ class RDTSocket(UnreliableSocket):
         super(RDTSocket, self).bind(address)
         self._event_loop = ServerEventLoop(self)
         self._event_loop.start()
+
+    def create_simple_socket(self, remote: (str, int), recv_offset: int, send_offset: int) -> 'SimpleRDT':
+        return SimpleRDT(self._rate, self.debug, recv_offset, send_offset, remote, self._event_loop.event_queue)
+
+
+class SimpleRDT(RDTSocket):
+
+    def __init__(self, rate, debug, recv_offset: int, send_offset: int, remote: (str, int), event_queue: SimpleQueue):
+        super(SimpleRDT, self).__init__(rate, debug)
+        self.send_buffer = {}
+        self.send_offset = send_offset
+        self.send_success_offset = send_offset
+        self.event_queue = event_queue
+        self.addr = remote
+        self.last_ack = 0
+        self.recv_buffer = []
+        self.recv_offset = recv_offset
+        self.status = None
+        self.__is_close = False
+
+    def close(self):
+        assert not self.__is_close, 'Duplicated close'
+        self.__is_close = True
+        self.event_queue.put(RDTEvent(RDTEventType.SIMPLE_CLOSE, self.addr))
+
+    def send(self, _bytes: bytes):
+        assert not self.__is_close, 'Closed!'
+        self.event_queue.put(RDTEvent(RDTEventType.SEND, (self.addr, _bytes)))
+
+    def recv(self, bufsize: int) -> bytes:
+        assert not self.__is_close, 'Closed!'
+        current = time.time()
+        timeout = super().gettimeout()
+        while time.time() - current < timeout:
+            with self.lock:
+                if len(self.data) > 0:
+                    re = self.data[:bufsize]
+                    self.data = self.data[bufsize:]
+                    return re
+            time.sleep(0.00001)
+
+        raise TimeoutError()
+
+    def connect(self, address: (str, int)):
+        assert False, 'Duplicated connecting'
+
+    def accept(self) -> ('RDTSocket', (str, int)):
+        assert False, 'It is not listening'
 
 
 """

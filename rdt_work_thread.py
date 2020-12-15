@@ -5,7 +5,7 @@ from queue import *
 
 from rdt_entity import *
 from rdt_event_loop import EventLoop
-from rdt_packet import RDT_Packet
+from rdt_entity import RDTPacket
 
 
 class SendLoop(threading.Thread):
@@ -20,16 +20,16 @@ class SendLoop(threading.Thread):
             try:
                 if not self.send_queue.empty():
                     try:
-                        pkt: RDT_Packet = self.send_queue.get_nowait()
+                        pkt: RDTPacket = self.send_queue.get_nowait()
                         if pkt == 0:
                             break
                         _bytes = pkt.make_packet()
-                        self.socket.sendto(_bytes, pkt.addr)
-                        self.event_loop.put(RDTEventType.SEND_SUCCESS, id(pkt))
+                        self.socket.sendto(_bytes, pkt.remote)
+                        self.event_loop.put(RDTEventType.SEND_SUCCESS, pkt)
                     except Empty:
                         pass
                 else:
-                    time.sleep(0.0001)
+                    time.sleep(0.00001)
             except Exception as e:
                 self.event_loop.put(RDTEventType.UNKNOWN_ERROR, e)
 
@@ -48,7 +48,7 @@ class RecvLoop(threading.Thread):
         while self.event_queue.empty():
             try:
                 rec, addr = self.socket.recvfrom(0xff)
-                pkt = RDT_Packet.resolve(rec, addr)
+                pkt = RDTPacket.resolve(rec, addr)
                 if pkt.check():
                     if pkt.SYN == 1:
                         if pkt.ACK == 0:
