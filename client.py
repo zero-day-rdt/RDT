@@ -1,6 +1,7 @@
 from rdt import RDTSocket
 
-c = RDTSocket(rate=10000, debug=True)
+c = RDTSocket(rate=1000, debug=True)
 c.connect(('127.0.0.1', 1777))
-c.send(b'lslnb')
+with open('rdt.py', 'rb') as f:
+    c.send(f.read())
 print(c.recv(1000))

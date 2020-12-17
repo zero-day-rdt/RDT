@@ -46,9 +46,9 @@ class RDTEvent:
 class RDTTimer:
 
     def __init__(self, timeout: float, e: RDTEvent):
-        self.c = time.time()
-        self.e = e
-        self.t = self.c + timeout
+        self.start_time = time.time()
+        self.event = e
+        self.target_time = self.start_time + timeout
 
 
 class RDTPacket:
@@ -64,26 +64,21 @@ class RDTPacket:
         self.LEN = len(PAYLOAD)
         self.CHECKSUM = 0
         self.PAYLOAD: bytes = PAYLOAD
+        self.PAYLOAD_REAL: bytes = self.PAYLOAD
         self.remote = remote
         self.__packet: bytearray = bytearray()
 
-    def _make_head(self):
+    def make_packet(self):
         self.__packet = bytearray()
         self.__packet += ((self.SYN << 7) + (self.ACK << 6) + (self.FIN << 5) + (self.RST << 4) +
                           (self.SAK << 3) + self._).to_bytes(1, 'big')
         self.__packet += struct.pack('!2I2H', self.SEQ, self.SEQ_ACK, self.LEN, 0)  # CHECKSUM
-
-    def make_packet(self):
-        self._make_head()
-
-        p_len = len(self.PAYLOAD)
-        extra = (4 - p_len % 4) % 4
-        self.PAYLOAD += b'\x00' * extra
-        self.LEN = p_len
+        extra = (4 - self.LEN % 4) % 4
+        self.PAYLOAD_REAL = self.PAYLOAD + b'\x00' * extra
         self.CHECKSUM = self._checksum()
 
         self.__packet[-2:] = struct.pack('!H', self.CHECKSUM)
-        self.__packet += self.PAYLOAD
+        self.__packet += self.PAYLOAD_REAL
         return self.__packet
 
     @staticmethod
@@ -93,11 +88,11 @@ class RDTPacket:
         r.SYN, r.ACK, r.FIN, = (bits >> 7) & 1, (bits >> 6) & 1, (bits >> 5) & 1
         r.RST, r.SAK, r._ = (bits >> 4) & 1, (bits >> 3) & 1, bits & 0xF
 
-        r.PAYLOAD = bs[13:]
+        r.PAYLOAD_REAL = bs[13:]
         return r
 
     def _checksum(self) -> int:
-        bs = self.PAYLOAD
+        bs = self.PAYLOAD_REAL
         checksum = (self.SYN << 7 + self.ACK << 6 + self.FIN << 5 + self.RST << 4 + self.SAK << 3 + self._) << 24
         checksum += self.SEQ + self.SEQ_ACK + (self.LEN << 16)
         if len(bs) > 0:
@@ -107,14 +102,11 @@ class RDTPacket:
         return checksum
 
     def check(self) -> bool:
-        if len(self.PAYLOAD) % 4 != 0:
+        if len(self.PAYLOAD_REAL) % 4 != 0:
             return False
         check = self._checksum()
         if check != self.CHECKSUM or self._ != 0:
             return False
-        self.PAYLOAD = self.PAYLOAD[:self.LEN]
+        self.PAYLOAD = self.PAYLOAD_REAL[:self.LEN]
 
         return True
-
-    def len_(self):
-        return self.LEN + 13  # 报头长度
