@@ -14,40 +14,66 @@ def addr_to_bytes(addr):
     return inet_aton(addr[0]) + addr[1].to_bytes(4, 'big')
 
 
-def corrupt(data: bytes) -> bytes:
-    raw = list(data)
-    for _ in range(0, random.randint(0, 3)):
-        pos = random.randint(0, len(raw) - 1)
-        raw[pos] = random.randint(0, 255)
-    return bytes(raw)
-
-
 class Server(ThreadingUDPServer):
-    def __init__(self, addr, rate=None, delay=None, corrupt=None):
+    def __init__(self, addr, rate=None, delay=None):
         super().__init__(addr, None)
         self.rate = rate
         self.buffer = 0
         self.delay = delay
-        self.corrupt = corrupt
 
     def verify_request(self, request, client_address):
-        if self.buffer < 10:
-            self.buffer += 1
+        """
+        request is a tuple (data, socket)
+        data is the received bytes object
+        socket is new socket created automatically to handle the request
+
+        if this function returns False， the request will not be processed, i.e. is discarded.
+        details: https://docs.python.org/3/library/socketserver.html
+        """
+        if self.buffer < 100000:  # some finite buffer size (in bytes)
+            self.buffer += len(request[0])
             return True
         else:
             return False
 
     def finish_request(self, request, client_address):
         data, socket = request
-        print(data)
-        lock.acquire()
-        if self.rate: time.sleep(len(data) / self.rate)
-        self.buffer -= 1
-        lock.release()
+
+        with lock:
+            if random.random() < 0.1:
+                self.buffer -= len(data)
+                return
+            if self.rate:
+                time.sleep(len(data) / self.rate)
+            self.buffer -= len(data)
+            """
+            blockingly process each request
+            you can add random loss/corrupt here
+
+            for example:
+            if random.random() < loss_rate:
+                return 
+            for i in range(len(data)-1):
+                if random.random() < corrupt_rate:
+                    data[i] = data[:i] + (data[i]+1).to_bytes(1,'big) + data[i+1:]
+            """
+
+        """
+        this part is not blocking and is executed by multiple threads in parallel
+        you can add random delay here, this would change the order of arrival at the receiver side.
+        
+        for example:
+        time.sleep(random.random())
+        """
 
         to = bytes_to_addr(data[:8])
-        # print(client_address, to)
-        socket.sendto(addr_to_bytes(client_address) + data[8:], to)
+        dara = bytearray(data)
+        print(client_address, to)  # observe tht traffic
+        for i in range(len(data[8:])):
+            if random.random() < 0.00001:
+                dara[i + 8] = data[i + 8] ^ 0x7F
+                print('corruption')
+        socket.sendto(addr_to_bytes(client_address) + dara[8:], to)
 
 
 server_address = ('127.0.0.1', 12345)

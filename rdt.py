@@ -7,12 +7,12 @@ import threading
 from queue import SimpleQueue, Empty
 
 SEND_WAIT = 0.001  # ACK等数据的时间
-SEND_FIN_WAIT = 0.2  # 下次尝试发FIN的时间
-RTT_ = 0.3  # TR对于上次的保留系数，越小变化越剧烈
-INCREASE_ = 0  # 升窗界线
+SEND_FIN_WAIT = 0.5  # 下次尝试发FIN的时间
+RTT_ = 0.7  # TR对于上次的保留系数，越小变化越剧烈
+INCREASE_ = -0.5  # 升窗界线
 DECREASE_ = 3  # 降窗界线
-EXTRA_ACK_WAIT = 2  # 额外的等待ACK的时间
-SYN_ACK_WAIT = 2  # 等待回复SYN_ACK的时间
+EXTRA_ACK_WAIT = 3  # 额外的等待ACK的时间
+SYN_ACK_WAIT = 3  # 等待回复SYN_ACK的时间
 MAX_PKT_LEN = 1024  # 最大包长度
 FORCE_DECREASE = 3  # 连续超时，强制降窗
 
@@ -125,6 +125,9 @@ class RDTSocket(UnreliableSocket):
             return SimpleRDT(self._rate, self.debug, recv_offset, send_offset, remote, event_queue)
         return SimpleRDT(self._rate, self.debug, recv_offset, send_offset, remote, self._event_loop.event_queue)
 
+    def block_until_close(self):
+        self._event_loop.join()
+
 
 class SimpleRDT(RDTSocket):
 
@@ -147,8 +150,8 @@ class SimpleRDT(RDTSocket):
         self.is_close = False
         self.remote_close = False
         self.lock: threading.RLock = threading.RLock()
-        self.BASE_RTT = 0.2  # 应答延迟
-        self.SEND_WINDOW_SIZE = 6  # 发送窗口大小，就是限制 wait_ack 的大小
+        self.BASE_RTT = (MAX_PKT_LEN + 13) / rate  # 应答延迟
+        self.SEND_WINDOW_SIZE = 1 + 1//self.BASE_RTT  # 发送窗口大小，限制 wait_ack 的大小
         self.LR = 0  # 丢包率 暂时不管
 
     def close(self):
@@ -434,7 +437,7 @@ class EventLoop(threading.Thread):
     def deal_ack(self, simple_sct: SimpleRDT, pkt: RDTPacket):
         # 处理 ACK
         if simple_sct.debug:
-            print('437: ACK前 等待ACK的长度-> ' + str(len(simple_sct.wait_ack)))
+            print('437: ACK前 等待ACK的长度-> ', len(simple_sct.wait_ack), ' ACK-> ', pkt.SEQ_ACK, ' SEQ-> ', simple_sct.SEQ)
         while len(simple_sct.wait_ack) > 0:
             timer: RDTTimer = simple_sct.wait_ack[0]
             wait_ack_pkt: RDTPacket = timer.event.body
@@ -468,7 +471,8 @@ class EventLoop(threading.Thread):
                 print('460: 乱序SAK-> SEQ_SAK=', pkt.SEQ)
             self.call_send_sak(SEQ_SAK, simple_sct)
         elif simple_sct.debug:
-            print('463: 无效包-> SEQ=', pkt.SEQ, ' 当前SEQ=', simple_sct.SEQ)
+            self.send_ack_pkt(simple_sct)
+            print('473: 无效包-> SEQ=', pkt.SEQ, ' 当前SEQ=', simple_sct.SEQ_ACK)
 
     def deal_sak(self, simple_sct: SimpleRDT, pkt: RDTPacket):
         SEQ_SAK = pkt.SEQ
@@ -553,6 +557,7 @@ class ServerEventLoop(EventLoop):
         super(ServerEventLoop, self).run()
 
     def accept(self) -> (RDTSocket, (str, int)):
+        assert not self.__is_close, 'Can not accept after close'
         if not self.accept_queue.empty():
             try:
                 return self.accept_queue.get_nowait()
@@ -563,13 +568,16 @@ class ServerEventLoop(EventLoop):
         if self.__is_close:
             return
         remote = pkt.remote
-        print('561: SYN<- ', remote)
         assert remote not in self.connections, 'Has SYN'
         simple_sct = self.socket.create_simple_socket(remote, pkt.SEQ, pkt.SEQ_ACK)
         simple_sct.status = RDTConnectionStatus.SYN_
         self.connections[remote] = simple_sct
-        syn_ack_pkt = RDTPacket(SYN=1, ACK=1, remote=remote)
+        syn_ack_pkt = RDTPacket(SYN=1, ACK=1, remote=remote, SEQ=simple_sct.SEQ, SEQ_ACK=simple_sct.SEQ_ACK)
         self.send_loop.put(syn_ack_pkt)
+        timer = self.push_timer(simple_sct.BASE_RTT * 2 + EXTRA_ACK_WAIT,
+                                RDTEvent(RDTEventType.ACK_TIMEOUT, syn_ack_pkt))
+        simple_sct.wait_ack.append(timer)
+        print('561: SYN<- ', remote, '')
 
     def on_syn_ack(self, pkt: RDTPacket):
         assert False, 'SYN_ACK ???'
@@ -613,7 +621,7 @@ class ServerEventLoop(EventLoop):
         self.deal_send(simple_sct, bs)
 
     def on_send_ack(self, simple_sct: SimpleRDT):
-        if simple_sct.last_ACK == simple_sct.SEQ_ACK and simple_sct.status.value < RDTConnectionStatus.FIN.value:
+        if simple_sct.last_ACK == simple_sct.SEQ_ACK and simple_sct.status == RDTConnectionStatus.ACK_:
             return  # ACK过了
         self.send_ack_pkt(simple_sct)
 
@@ -652,6 +660,9 @@ class ServerEventLoop(EventLoop):
     def on_listen_close(self):
         assert not self.__is_close, 'Has closed'
         self.__is_close = True
+        while not self.accept_queue.empty():
+            _, remote = self.accept_queue.get()
+            del self.connections[remote]
         self.put(RDTEventType.DESTROY_ALL, None)
 
     def on_destroy_simple(self, skt: SimpleRDT):
@@ -684,12 +695,9 @@ class ClientEventLoop(EventLoop):
 
     def on_syn_ack(self, pkt: RDTPacket):
         assert pkt.remote == self.simple_sct.remote
-        if self.simple_sct.status is None:
-            self.simple_sct.status = RDTConnectionStatus.SYN_ACK_
-            self.cancel_timer(self.simple_sct.wait_ack.pop(0))
-        else:
-            return
+        self.simple_sct.status = RDTConnectionStatus.SYN_ACK_
         self.await_send_ack(self.simple_sct)
+        self.cancel_timer(self.simple_sct.wait_ack.pop(0))
 
     def on_ack(self, pkt: RDTPacket):
         assert pkt.remote == self.simple_sct.remote
@@ -847,14 +855,16 @@ class RecvLoop(threading.Thread):
                         self.event_loop.put(RDTEventType.RST, pkt)
                     elif pkt.ACK == 1:
                         self.event_loop.put(RDTEventType.ACK, pkt)
+                    elif pkt.SAK == 1:
+                        self.event_loop.put(RDTEventType.SAK, pkt)
                     else:
                         self.event_loop.put(RDTEventType.CORRUPTION, pkt)
                 else:
                     self.event_loop.put(RDTEventType.CORRUPTION, pkt)
             except AssertionError:
                 print('?')
-            # except Exception as e:
-            #     self.event_loop.put(RDTEventType.UNKNOWN_ERROR, e)
+            except Exception as e:
+                self.event_loop.put(RDTEventType.UNKNOWN_ERROR, e)
 
 
 """
