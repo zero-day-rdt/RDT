@@ -14,7 +14,6 @@ class RDTEventType(Enum):
     SAK = 6
     CORRUPTION = 7
     SEND_ACK = 8  # 需要 send ACK
-    SEND_SAK = 9  # 需要 send SAK
     SEND_FIN = 10  # 需要 send FIN
     UNKNOWN_ERROR = 11  # 在 send loop 或 recv loop 捕获的异常，未知类型
     ACK_TIMEOUT = 12  # 等待ACK超时
@@ -49,10 +48,11 @@ class RDTTimer:
         self.start_time = time.time()
         self.event = e
         self.target_time = self.start_time + timeout
+        self.active = True
 
 
 class RDTPacket:
-    def __init__(self, remote, SYN=0, ACK=0, FIN=0, RST=0, SAK=0, _=0, SEQ=0, SEQ_ACK=0, PAYLOAD=bytes()):
+    def __init__(self, remote, SEQ, SEQ_ACK, SYN=0, ACK=0, FIN=0, RST=0, SAK=0, _=0, PAYLOAD=bytes()):
         self.SYN = SYN
         self.ACK = ACK
         self.FIN = FIN
@@ -83,10 +83,10 @@ class RDTPacket:
 
     @staticmethod
     def resolve(bs: bytearray, addr: (str, int)) -> 'RDTPacket':
-        r: RDTPacket = RDTPacket(remote=addr)
+        r: RDTPacket = RDTPacket(remote=addr, SEQ=0, SEQ_ACK=0)
         bits, r.SEQ, r.SEQ_ACK, r.LEN, r.CHECKSUM = struct.unpack('!B2I2H', bs[:13])
         r.SYN, r.ACK, r.FIN, = (bits >> 7) & 1, (bits >> 6) & 1, (bits >> 5) & 1
-        r.RST, r.SAK, r._ = (bits >> 4) & 1, (bits >> 3) & 1, bits & 0xF
+        r.RST, r.SAK, r._ = (bits >> 4) & 1, (bits >> 3) & 1, bits & 0x7
 
         r.PAYLOAD_REAL = bs[13:]
         return r
@@ -96,17 +96,18 @@ class RDTPacket:
         checksum = (self.SYN << 7 + self.ACK << 6 + self.FIN << 5 + self.RST << 4 + self.SAK << 3 + self._) << 24
         checksum += self.SEQ + self.SEQ_ACK + (self.LEN << 16)
         if len(bs) > 0:
-            checksum += reduce(lambda x, y: x + y, struct.unpack('!%dI' % (len(bs) // 4), bs))
+            for i in range(0, len(bs), 4):
+                checksum += (bs[i] << 24) + (bs[i + 1] << 16) + (bs[i + 2] << 8) + bs[i + 3]
         while checksum > 0xFFFF:
-            checksum = checksum % 0xFFFF + checksum // 0xFFFF
+            checksum = (checksum % 0xFFFF) + (checksum // 0xFFFF)
         return checksum
 
     def check(self) -> bool:
         if len(self.PAYLOAD_REAL) % 4 != 0:
             return False
         check = self._checksum()
+        self.PAYLOAD = self.PAYLOAD_REAL[:self.LEN]
         if check != self.CHECKSUM or self._ != 0:
             return False
-        self.PAYLOAD = self.PAYLOAD_REAL[:self.LEN]
 
         return True

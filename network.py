@@ -30,19 +30,21 @@ class Server(ThreadingUDPServer):
         if this function returns False， the request will not be processed, i.e. is discarded.
         details: https://docs.python.org/3/library/socketserver.html
         """
-        if self.buffer < 100000:  # some finite buffer size (in bytes)
-            self.buffer += len(request[0])
-            return True
-        else:
-            return False
+        return True
+        # if self.buffer < 100000:  # some finite buffer size (in bytes)
+        #     self.buffer += len(request[0])
+        #     return True
+        # else:
+        #     print('爆炸了')
+        #     return False
 
     def finish_request(self, request, client_address):
         data, socket = request
 
         with lock:
-            if random.random() < 0.1:
-                self.buffer -= len(data)
-                return
+            # if random.random() < 0.1:
+            #     self.buffer -= len(data)
+            #     return
             if self.rate:
                 time.sleep(len(data) / self.rate)
             self.buffer -= len(data)
@@ -68,16 +70,16 @@ class Server(ThreadingUDPServer):
 
         to = bytes_to_addr(data[:8])
         dara = bytearray(data)
-        print(client_address, to)  # observe tht traffic
-        for i in range(len(data[8:])):
-            if random.random() < 0.00001:
-                dara[i + 8] = data[i + 8] ^ 0x7F
-                print('corruption')
+        # print(client_address, to)  # observe tht traffic
+        # for i in range(len(data[8:])):
+        #     if random.random() < 0.00001:
+        #         dara[i + 8] = data[i + 8] ^ 0x7F
+        #         print('corruption')
         socket.sendto(addr_to_bytes(client_address) + dara[8:], to)
 
 
 server_address = ('127.0.0.1', 12345)
 
 if __name__ == '__main__':
-    with Server(server_address) as server:
+    with Server(server_address, rate=10000) as server:
         server.serve_forever()

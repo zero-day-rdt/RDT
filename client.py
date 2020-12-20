@@ -9,9 +9,6 @@ i = c.recv(1024)
 while len(i) > 0:
     bs.extend(i)
     i = c.recv(1024)
-with open('lslnb.jpg', 'wb') as f:
-    f.write(bs)
-    f.close()
 c.close()
 c.block_until_close()
 print('结束: ', time.time() - current)
