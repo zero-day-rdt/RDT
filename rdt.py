@@ -7,7 +7,7 @@ from queue import SimpleQueue, Empty
 
 SEND_WAIT = 0.005  # ACK等数据的时间
 SEND_FIN_WAIT = 0.5  # 下次尝试发FIN的时间
-RTT_ = 0.875  # TR对于上次的保留系数，越小变化越剧烈
+RTT_ = 0.95  # TR对于上次的保留系数，越小变化越剧烈
 INCREASE_ = 1  # 升窗界线
 DECREASE_ = 3  # 降窗界线
 AVOID_ = 5  # 进入拥塞避免
@@ -199,16 +199,11 @@ class SimpleRDT(RDTSocket):
         tr_differ = (1 - (self.BASE_RTT / RTT) ** 3) * self.SEND_WINDOW_SIZE
         if self.debug:
             print('195: 计算出的differ-> ', tr_differ)
-        if self.vegas_status == 0:
-            self.SEND_WINDOW_SIZE += 1
-            if tr_differ > AVOID_:
-                self.BASE_RTT = RTT
-                self.vegas_status = 1
+        if tr_differ > DECREASE_:
+            self.SEND_WINDOW_SIZE -= 1
         else:
-            if tr_differ < INCREASE_:
-                self.SEND_WINDOW_SIZE += 1
-            elif tr_differ > DECREASE_:
-                self.SEND_WINDOW_SIZE -= 1
+            self.SEND_WINDOW_SIZE += 1
+        self.BASE_RTT = self.BASE_RTT*RTT_ + (1-RTT_)*RTT
         if self.SEND_WINDOW_SIZE < 1:
             self.SEND_WINDOW_SIZE = 1
         if self.debug:
@@ -602,15 +597,15 @@ class ServerEventLoop(EventLoop):
                 print('\033[0;31m555: Empty-> ', e, '\033[0m')
 
     def on_syn(self, pkt: RDTPacket):
-        if self.__is_close:
-            self.send_loop.put(RDTPacket(remote=pkt.remote, SEQ=0, SEQ_ACK=0, RST=1))
-            return
         remote = pkt.remote
         if remote in self.connections:
             simple_sct = self.connections[remote]
             syn_ack_pkt = RDTPacket(SYN=1, ACK=1, remote=remote, SEQ=simple_sct.SEQ, SEQ_ACK=simple_sct.SEQ_ACK,
                                     PAYLOAD=bytes(1024))
             self.send_loop.put(syn_ack_pkt)
+        elif self.__is_close:
+            self.send_loop.put(RDTPacket(remote=pkt.remote, SEQ=0, SEQ_ACK=0, RST=1))
+            return
         assert remote not in self.connections, 'Has SYN'
         simple_sct = self.socket.create_simple_socket(remote, pkt.SEQ, pkt.SEQ_ACK)
         simple_sct.status = RDTConnectionStatus.SYN_

@@ -3,7 +3,7 @@ import time
 from rdt import RDTSocket
 
 start_time = time.time()
-s = RDTSocket(debug=True)
+s = RDTSocket(rate=50000, debug=True)
 s.bind(('127.0.0.1', 1777))
 with open('1700k.jpg', 'rb') as f:
     content = f.read()
