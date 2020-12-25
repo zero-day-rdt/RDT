@@ -4,13 +4,13 @@ from rdt_entity import *
 import time
 import threading
 from queue import SimpleQueue, Empty
+from math import *
 
 SEND_WAIT = 0.005  # ACK等数据的时间
 SEND_FIN_WAIT = 0.5  # 下次尝试发FIN的时间
 RTT_ = 0.95  # TR对于上次的保留系数，越小变化越剧烈
-INCREASE_ = 1  # 升窗界线
+INCREASE_ = 0  # 升窗界线
 DECREASE_ = 3  # 降窗界线
-AVOID_ = 5  # 进入拥塞避免
 EXTRA_ACK_WAIT = 2  # 额外的等待ACK的时间
 SYN_ACK_WAIT = 5  # 等待回复SYN_ACK的时间
 MAX_PKT_LEN = 1024  # 最大包长度
@@ -200,12 +200,12 @@ class SimpleRDT(RDTSocket):
         if self.debug:
             print('195: 计算出的differ-> ', tr_differ)
         if tr_differ > DECREASE_:
-            self.SEND_WINDOW_SIZE -= 1
-        else:
+            self.SEND_WINDOW_SIZE -= log2(self.SEND_WINDOW_SIZE) / max(self.SEND_WINDOW_SIZE / 3, 1)
+        elif tr_differ < INCREASE_:
             self.SEND_WINDOW_SIZE += 1
-        self.BASE_RTT = self.BASE_RTT*RTT_ + (1-RTT_)*RTT
-        if self.SEND_WINDOW_SIZE < 1:
-            self.SEND_WINDOW_SIZE = 1
+        else:
+            self.SEND_WINDOW_SIZE += log2(self.SEND_WINDOW_SIZE + 1) / self.SEND_WINDOW_SIZE
+        self.BASE_RTT = self.BASE_RTT * RTT_ + (1 - RTT_) * RTT
         if self.debug:
             print('201: 更新后WINDOW->', self.SEND_WINDOW_SIZE, '\033[0m')
 
@@ -312,9 +312,9 @@ class EventLoop(threading.Thread):
                         self.on_sb()
                 except Empty:
                     pass
-                except AssertionError as e:
+                except AssertionError as ev:
                     if self.socket.debug:
-                        print('\033[0;31m 298: Assertion->', e, '\033[0m')
+                        print('\033[0;31m 298: Assertion->', ev, '\033[0m')
                 except Exception as error:
                     if self.socket.debug:
                         print('\033[0;31m 300: Error->', error, '\033[0m')
@@ -400,9 +400,9 @@ class EventLoop(threading.Thread):
     def before_vanish(self):
         pass  # 事件循环消失前最后的挣扎
 
-    def push_timer(self, timeout: float, e: RDTEvent):
+    def push_timer(self, timeout: float, ev: RDTEvent):
         index = 0
-        timer = RDTTimer(timeout=timeout, e=e)
+        timer = RDTTimer(timeout=timeout, e=ev)
         while len(self.timers) > index:
             if self.timers[index].target_time <= timer.target_time:
                 index += 1
@@ -418,8 +418,8 @@ class EventLoop(threading.Thread):
     def cancel_timer(self, _: RDTTimer):
         try:
             self.timers.remove(_)
-        except Exception as e:
-            print('\033[0;33m426: Exception->', e)
+        except Exception as ev:
+            print('\033[0;33m426: Exception->', ev)
 
     def send_sak_pkt(self, seq_sak: int, sct: SimpleRDT):
         sak_pkt = RDTPacket(SAK=1, SEQ=seq_sak, remote=sct.remote, SEQ_ACK=sct.SEQ_ACK)
@@ -531,6 +531,8 @@ class EventLoop(threading.Thread):
             simple_sct.SEQ += pkt.LEN
             simple_sct.last_ACK = simple_sct.SEQ_ACK
             simple_sct.wait_send = simple_sct.wait_send[MAX_PKT_LEN:]
+            if self.socket.debug:
+                print('\033[0;33m 535: 发送包 SEQ->', pkt.SEQ)
             timer = self.push_timer(simple_sct.BASE_RTT * 4 + EXTRA_ACK_WAIT, RDTEvent(RDTEventType.ACK_TIMEOUT, pkt))
             simple_sct.wait_ack.append(timer)
 
@@ -543,7 +545,8 @@ class EventLoop(threading.Thread):
         pkt.SEQ_ACK = simple_sct.SEQ_ACK
         simple_sct.last_ACK = simple_sct.SEQ_ACK
         if simple_sct.SEND_WINDOW_SIZE > 3 and len(
-                simple_sct.wait_resend) / simple_sct.SEND_WINDOW_SIZE > 0.2 and time.time() - simple_sct.last_bomb > 4 * simple_sct.BASE_RTT + EXTRA_ACK_WAIT:
+                simple_sct.wait_resend) / simple_sct.SEND_WINDOW_SIZE > 0.2 \
+                and time.time() - simple_sct.last_bomb > 4 * simple_sct.BASE_RTT + EXTRA_ACK_WAIT:
             simple_sct.SEND_WINDOW_SIZE = int(simple_sct.SEND_WINDOW_SIZE * 0.7)
             simple_sct.last_bomb = time.time()
             if simple_sct.debug:
@@ -567,9 +570,7 @@ class EventLoop(threading.Thread):
         self.send_loop.put(pkt)
         if skt.debug:
             print('\033[0;34m528: 发送FIN， 当前状态-> ', skt.status, '\033[0m')
-        if skt.status == RDTConnectionStatus.FIN_:
-            pass
-        else:
+        if skt.status != RDTConnectionStatus.FIN_:
             skt.status = RDTConnectionStatus.FIN
         timer = self.push_timer(skt.BASE_RTT * 4 + EXTRA_ACK_WAIT, RDTEvent(RDTEventType.ACK_TIMEOUT, pkt))
         skt.wait_ack.append(timer)
@@ -593,8 +594,8 @@ class ServerEventLoop(EventLoop):
         if not self.accept_queue.empty():
             try:
                 return self.accept_queue.get_nowait()
-            except Empty as e:
-                print('\033[0;31m555: Empty-> ', e, '\033[0m')
+            except Empty as ev:
+                print('\033[0;31m555: Empty-> ', ev, '\033[0m')
 
     def on_syn(self, pkt: RDTPacket):
         remote = pkt.remote
@@ -798,8 +799,8 @@ class ClientEventLoop(EventLoop):
                 self.socket.bind_(addr)
                 addr = ('127.0.0.1', random.randint(1024, 65535))
                 break
-            except Exception as e:
-                print('\033[0;31m739: Try ', addr, ' Fail-> ', e, '\033[0m')
+            except Exception as ev:
+                print('\033[0;31m739: Try ', addr, ' Fail-> ', ev, '\033[0m')
         self.send_loop.start()
         self.recv_loop.start()
         pkt: RDTPacket = RDTPacket(remote=remote, SYN=1, SEQ=self.simple_sct.SEQ, SEQ_ACK=self.simple_sct.SEQ_ACK,
@@ -874,8 +875,8 @@ class SendLoop(threading.Thread):
             # except Exception as e:
             #     self.event_loop.put(RDTEventType.UNKNOWN_ERROR, e)
 
-    def put(self, e):
-        self.send_queue.put(e)
+    def put(self, ev):
+        self.send_queue.put(ev)
 
 
 class RecvLoop(threading.Thread):
@@ -915,8 +916,8 @@ class RecvLoop(threading.Thread):
                     self.event_loop.put(RDTEventType.CORRUPTION, pkt)
             except AssertionError as a:
                 print('\033[0;31m', a, '\033[0m')
-            except Exception as e:
-                self.event_loop.put(RDTEventType.UNKNOWN_ERROR, e)
+            except Exception as ev:
+                self.event_loop.put(RDTEventType.UNKNOWN_ERROR, ev)
 
 
 """

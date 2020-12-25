@@ -1,11 +1,9 @@
 import time
 
-from rdt import RDTSocket
-
 start_time = time.time()
 s = RDTSocket(rate=50000, debug=True)
-s.bind(('127.0.0.1', 1777))
-with open('1700k.jpg', 'rb') as f:
+s.bind(('127.0.0.1', 2777))
+with open('../1700k.jpg', 'rb') as f:
     content = f.read()
 for i in range(5):
     c, addr = s.accept()
