@@ -31,7 +31,7 @@ class Server(ThreadingUDPServer):
         details: https://docs.python.org/3/library/socketserver.html
         """
         # return True
-        if self.buffer < 100000:  # some finite buffer size (in bytes)
+        if self.buffer < 100000:  # some finite buffer size (in bytes) #change1
             self.buffer += len(request[0])
             return True
         else:
@@ -42,7 +42,7 @@ class Server(ThreadingUDPServer):
         data, socket = request
 
         with lock:
-            if random.random() < 0.1:
+            if random.random() < 0.1:#change1
                 self.buffer -= len(data)
                 return
             if self.rate:
@@ -81,5 +81,5 @@ class Server(ThreadingUDPServer):
 server_address = ('127.0.0.1', 12345)
 
 if __name__ == '__main__':
-    with Server(server_address, rate=10000) as server:
+    with Server(server_address, rate=17000) as server: #change1
         server.serve_forever()

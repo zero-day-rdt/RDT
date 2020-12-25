@@ -442,6 +442,8 @@ class EventLoop(threading.Thread):
         self.put(RDTEventType.SEND, (skt.remote, bytes()))
 
     def deal_ack(self, simple_sct: SimpleRDT, pkt: RDTPacket):
+        if simple_sct.debug:
+            print('\033[0;36m446: SEQ of pkt ->', pkt.SEQ, 'SEQ_ACK of pkt ->', pkt.SEQ_ACK)
         # 处理 ACK
         self.pop_wait_ack(simple_sct, pkt)
         # 窗口可能空了，去发数据
@@ -562,14 +564,17 @@ class EventLoop(threading.Thread):
         self.send_loop.put(pkt)
 
     def deal_send_fin(self, skt: SimpleRDT):
+        skt.SEQ += 1  # 强制加一做区分
         pkt = RDTPacket(remote=skt.remote, FIN=1, SEQ=skt.SEQ, SEQ_ACK=skt.SEQ_ACK)
         self.send_loop.put(pkt)
         if skt.debug:
             print('\033[0;34m528: 发送FIN， 当前状态-> ', skt.status, '\033[0m')
         if skt.status != RDTConnectionStatus.FIN_:
             skt.status = RDTConnectionStatus.FIN
-        timer = self.push_timer(skt.BASE_RTT + EXTRA_ACK_WAIT, RDTEvent(RDTEventType.ACK_TIMEOUT, pkt))
-        skt.wait_ack.append(timer)
+            timer = self.push_timer(skt.BASE_RTT + EXTRA_ACK_WAIT, RDTEvent(RDTEventType.ACK_TIMEOUT, pkt))
+            skt.wait_ack.append(timer)
+        else:
+            self.push_timer(skt.BASE_RTT + EXTRA_ACK_WAIT, RDTEvent(RDTEventType.DESTROY_SIMPLE, skt))
 
 
 class ServerEventLoop(EventLoop):
@@ -631,12 +636,13 @@ class ServerEventLoop(EventLoop):
         if pkt.remote not in self.connections:
             self.send_loop.put(RDTPacket(remote=pkt.remote, FIN=1, ACK=1, SEQ=0, SEQ_ACK=0))
             return
-        simple_sct = self.get_simple_sct(pkt)
+        simple_sct:SimpleRDT = self.get_simple_sct(pkt)
+        simple_sct.SEQ_ACK = pkt.SEQ
         if simple_sct.status.value < RDTConnectionStatus.FIN.value:
             simple_sct.status = RDTConnectionStatus.FIN_
             if simple_sct.debug:
                 print('\033[0;33m584: FIN<- ', pkt.remote, '\033[0m')
-            self.await_send_ack(simple_sct)
+            # self.await_send_ack(simple_sct)
             self.await_send_fin(simple_sct)
         elif simple_sct.status == RDTConnectionStatus.FIN:
             if simple_sct.debug:
@@ -648,8 +654,6 @@ class ServerEventLoop(EventLoop):
         simple_sct = self.get_simple_sct(pkt)
         if simple_sct.status.value < RDTConnectionStatus.FIN_ACK_.value:
             simple_sct.status = RDTConnectionStatus.FIN_ACK_
-            while len(simple_sct.wait_ack) > 0:
-                self.cancel_timer(simple_sct.wait_ack.pop(0))
         else:
             return  # FIN ACK过了
         self.put(RDTEventType.DESTROY_SIMPLE, simple_sct)
@@ -755,7 +759,7 @@ class ClientEventLoop(EventLoop):
         assert pkt.remote == self.simple_sct.remote
         if self.simple_sct.status.value < RDTConnectionStatus.FIN.value:
             self.simple_sct.status = RDTConnectionStatus.FIN_
-            self.await_send_ack(self.simple_sct)
+            # self.await_send_ack(self.simple_sct)
             self.await_send_fin(self.simple_sct)
         elif self.simple_sct.status == RDTConnectionStatus.FIN:
             self.send_fin_ack_pkt(self.simple_sct)
@@ -767,8 +771,6 @@ class ClientEventLoop(EventLoop):
             print('\033[0;32m717: FIN_ACK 状态-> ', self.simple_sct.status, '\033[0m')
         if self.simple_sct.status.value < RDTConnectionStatus.FIN_ACK_.value:
             self.simple_sct.status = RDTConnectionStatus.FIN_ACK_
-            while len(self.simple_sct.wait_ack) > 0:
-                self.cancel_timer(self.simple_sct.wait_ack.pop(0))
         else:
             return
         self.put(RDTEventType.DESTROY_ALL, None)
@@ -824,9 +826,11 @@ class ClientEventLoop(EventLoop):
         self.put(RDTEventType.SEND_FIN, self.simple_sct)
 
     def on_destroy_simple(self, skt: SimpleRDT):
-        assert False, 'Destroy simple ???'
+        self.on_destroy_all()
 
     def on_destroy_all(self):
+        for timer in self.simple_sct.wait_ack:
+            self.cancel_timer(timer)
         with self.simple_sct.lock:
             self.simple_sct.remote_close = True
         self.put(RDTEventType.VANISH, None)
