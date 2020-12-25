@@ -3,7 +3,7 @@ import time
 from difflib import Differ
 
 client = RDTSocket()
-client.connect(('127.0.0.1', 2777))
+client.connect(('127.0.0.1', 1777))
 
 data_count = 0
 echo = b''

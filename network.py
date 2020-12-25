@@ -1,6 +1,6 @@
-from socket import socket, AF_INET, SOCK_DGRAM, inet_aton, inet_ntoa
+from socket import inet_aton, inet_ntoa
 import random, time
-import threading, queue
+import threading
 from socketserver import ThreadingUDPServer
 
 lock = threading.Lock()
@@ -81,5 +81,5 @@ class Server(ThreadingUDPServer):
 server_address = ('127.0.0.1', 12345)
 
 if __name__ == '__main__':
-    with Server(server_address, rate=10000) as server:
+    with Server(server_address, rate=50000) as server:
         server.serve_forever()

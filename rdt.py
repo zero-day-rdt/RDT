@@ -202,7 +202,7 @@ class SimpleRDT(RDTSocket):
         if tr_differ > DECREASE_:
             self.SEND_WINDOW_SIZE -= log2(self.SEND_WINDOW_SIZE) / max(self.SEND_WINDOW_SIZE / 3, 1)
         elif tr_differ < INCREASE_:
-            self.SEND_WINDOW_SIZE += 1
+            self.SEND_WINDOW_SIZE += 1 / max(1.0, log2(self.SEND_WINDOW_SIZE))
         else:
             self.SEND_WINDOW_SIZE += log2(self.SEND_WINDOW_SIZE + 1) / self.SEND_WINDOW_SIZE
         self.BASE_RTT = self.BASE_RTT * RTT_ + (1 - RTT_) * RTT
@@ -572,7 +572,7 @@ class EventLoop(threading.Thread):
             print('\033[0;34m528: 发送FIN， 当前状态-> ', skt.status, '\033[0m')
         if skt.status != RDTConnectionStatus.FIN_:
             skt.status = RDTConnectionStatus.FIN
-        timer = self.push_timer(skt.BASE_RTT * 4 + EXTRA_ACK_WAIT, RDTEvent(RDTEventType.ACK_TIMEOUT, pkt))
+        timer = self.push_timer(skt.BASE_RTT + EXTRA_ACK_WAIT, RDTEvent(RDTEventType.ACK_TIMEOUT, pkt))
         skt.wait_ack.append(timer)
 
 

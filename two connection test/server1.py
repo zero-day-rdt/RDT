@@ -3,7 +3,7 @@ import time
 
 if __name__=='__main__':
     server = RDTSocket()
-    server.bind(('127.0.0.1', 2777))
+    server.bind(('127.0.0.1', 1777))
 
     while True:
         conn, client_addr = server.accept()

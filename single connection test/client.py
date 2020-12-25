@@ -12,11 +12,11 @@ count = 3
 with open('alice.txt', 'r') as f:
     data = f.read()
     encoded = data.encode()
-    assert len(data)==len(encoded)
+    assert len(data) == len(encoded)
 
 start = time.perf_counter()
-for i in range(count): # send 'alice.txt' for count times
-    data_count+=len(data)
+for i in range(count):  # send 'alice.txt' for count times
+    data_count += len(data)
     client.send(encoded)
 
 '''
@@ -27,7 +27,7 @@ while True:
     reply = client.recv(2048)
     echo += reply
     print(reply)
-    if len(echo)==len(encoded)*count:
+    if len(echo) == len(encoded) * count:
         break
 client.close()
 
@@ -35,9 +35,9 @@ client.close()
 make sure the following is reachable
 '''
 
-print(f'transmitted {data_count}bytes in {time.perf_counter()-start}s')
-print(f'tr = {data_count*2 / (time.perf_counter() - start) / 1000} KB/s\n')
-print(data*count == echo.decode())
-diff = Differ().compare((data*count).splitlines(keepends=True), echo.decode().splitlines(keepends=True))
+print(f'transmitted {data_count * 2}bytes in {time.perf_counter() - start}s')
+print(f'tr = {data_count * 2 / (time.perf_counter() - start) / 1000} KB/s\n')
+print(data * count == echo.decode())
+diff = Differ().compare((data * count).splitlines(keepends=True), echo.decode().splitlines(keepends=True))
 for line in diff:
-    assert line.startswith('  ') # check if data is correctly echoed
+    assert line.startswith('  ')  # check if data is correctly echoed
