@@ -498,11 +498,7 @@ class EventLoop(threading.Thread):
                     simple_sct.wait_resend.remove(timer)
                 self.cancel_timer(simple_sct.wait_ack.pop(0))
                 RTT = time.time() - timer.start_time
-                if simple_sct.debug:
-                    print('\033[0;34m437: RTT-> ', RTT, '\033[0m')
                 simple_sct.deal_RTT(RTT)
-                if simple_sct.debug:
-                    print('\033[0;34m441: WINDOW-> ', simple_sct.SEND_WINDOW_SIZE, '\033[0m')
                 break
             else:
                 break
@@ -684,7 +680,6 @@ class ServerEventLoop(EventLoop):
     def on_ack_timeout(self, pkt: RDTPacket):
         simple_sct: SimpleRDT = self.get_simple_sct(pkt)
         self.deal_ack_timeout(simple_sct, pkt)
-        # TODO 强制降窗，可能有问题
 
     def on_sak(self, pkt: RDTPacket):
         self.deal_sak(self.get_simple_sct(pkt), pkt)
