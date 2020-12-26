@@ -602,18 +602,20 @@ class ServerEventLoop(EventLoop):
         remote = pkt.remote
         if remote in self.connections:
             simple_sct = self.connections[remote]
-            syn_ack_pkt = RDTPacket(SYN=1, ACK=1, remote=remote, SEQ=simple_sct.SEQ, SEQ_ACK=simple_sct.SEQ_ACK,
-                                    PAYLOAD=bytes(1024))
+            simple_sct.SEQ_ACK = max(simple_sct.SEQ_ACK, pkt.SEQ+pkt.LEN)
+            syn_ack_pkt = RDTPacket(SYN=1, ACK=1, remote=remote, SEQ=simple_sct.SEQ, SEQ_ACK=simple_sct.SEQ_ACK)
             self.send_loop.put(syn_ack_pkt)
         elif self.__is_close:
             self.send_loop.put(RDTPacket(remote=pkt.remote, SEQ=0, SEQ_ACK=0, RST=1))
             return
         assert remote not in self.connections, 'Has SYN'
         simple_sct = self.socket.create_simple_socket(remote, pkt.SEQ, pkt.SEQ_ACK)
+        simple_sct.SEQ_ACK += pkt.LEN
         simple_sct.status = RDTConnectionStatus.SYN_
         self.connections[remote] = simple_sct
         syn_ack_pkt = RDTPacket(SYN=1, ACK=1, remote=remote, SEQ=simple_sct.SEQ, SEQ_ACK=simple_sct.SEQ_ACK,
                                 PAYLOAD=bytes(1024))
+        simple_sct.SEQ += 1024
         self.send_loop.put(syn_ack_pkt)
         timer = self.push_timer(SYN_ACK_WAIT,
                                 RDTEvent(RDTEventType.ACK_TIMEOUT, syn_ack_pkt))
@@ -743,6 +745,7 @@ class ClientEventLoop(EventLoop):
 
     def on_syn_ack(self, pkt: RDTPacket):
         assert pkt.remote == self.simple_sct.remote
+        self.simple_sct.SEQ_ACK = max(self.simple_sct.SEQ_ACK, pkt.SEQ + pkt.LEN)
         self.send_ack_pkt(self.simple_sct)
         if self.simple_sct.status is None:
             self.simple_sct.status = RDTConnectionStatus.SYN_ACK_
@@ -803,6 +806,7 @@ class ClientEventLoop(EventLoop):
         self.recv_loop.start()
         pkt: RDTPacket = RDTPacket(remote=remote, SYN=1, SEQ=self.simple_sct.SEQ, SEQ_ACK=self.simple_sct.SEQ_ACK,
                                    PAYLOAD=bytes(1024))
+        self.simple_sct.SEQ += 1024
         self.send_loop.put(pkt)
         if self.simple_sct.debug:
             print('\033[0;32m745: Try connect-> ', remote, '\033[0m')

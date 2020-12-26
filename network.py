@@ -81,5 +81,5 @@ class Server(ThreadingUDPServer):
 server_address = ('127.0.0.1', 12345)
 
 if __name__ == '__main__':
-    with Server(server_address, rate=17000) as server: #change1
+    with Server(server_address, rate=59000) as server: #change1
         server.serve_forever()
