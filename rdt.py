@@ -14,7 +14,7 @@ DECREASE_ = 3  # 降窗界线
 EXTRA_ACK_WAIT = 2  # 额外的等待ACK的时间
 SYN_ACK_WAIT = 5  # 等待回复SYN_ACK的时间
 MAX_PKT_LEN = 1024  # 最大包长度
-FORCE_DECREASE = 3  # 连续超时，强制降窗
+BOMB_RATE = 0.15  # 超时包长度占窗口的比例，强制降窗
 
 
 class RDTSocket(UnreliableSocket):
@@ -133,7 +133,7 @@ class SimpleRDT(RDTSocket):
 
     def __init__(self, rate, debug, recv_offset: int, send_offset: int, remote: (str, int), event_queue: SimpleQueue):
         super(SimpleRDT, self).__init__(rate, debug)
-        self.remote: (str, int) = None
+        self.remote: (str, int) = None  # 远方地址
         self.wait_ack = []  # 定时器数组，可能是已经触发的定时器，发出去的包等ack，无数据且不是(SYN, SYN_ACK, FIN)的包不会等待ACK，超时了会重发
         self.timeout_cnt = 0  # 连续超时计数
         self.wait_send = bytearray()  # 上层来的等待发送的数据
@@ -147,14 +147,14 @@ class SimpleRDT(RDTSocket):
         self.recv_buffer = []  # 收到的乱序包缓存
         self.SEQ_ACK = recv_offset  # 收到的最后一个正序SEQ
         self.data: bytearray = bytearray()  # 收好的正序数据
-        self.status = None
-        self.is_close = False
-        self.remote_close = False
+        self.status = None  # 这个连接当前的状态
+        self.is_close = False  # 上层是否close
+        self.remote_close = False  # 远方是否挥手完毕
         self.lock: threading.RLock = threading.RLock()
         self.BASE_RTT = 0  # 应答延迟
         self.vegas_status = 0  # 慢启动
         self.SEND_WINDOW_SIZE = 3  # 发送窗口大小，限制 wait_ack 的大小
-        self.last_bomb = 0
+        self.last_bomb = 0  # 上次强制降窗
 
     @property
     def current_window(self):
@@ -314,10 +314,10 @@ class EventLoop(threading.Thread):
                     pass
                 except AssertionError as ev:
                     if self.socket.debug:
-                        print('\033[0;31m 298: Assertion->', ev, '\033[0m')
+                        print('\033[0;31m 317: Assertion->', ev, '\033[0m')
                 except Exception as error:
                     if self.socket.debug:
-                        print('\033[0;31m 300: Error->', error, '\033[0m')
+                        print('\033[0;31m 320: Error->', error, '\033[0m')
 
     def close(self):
         self.send_loop.put(0)
@@ -543,7 +543,7 @@ class EventLoop(threading.Thread):
         pkt.SEQ_ACK = simple_sct.SEQ_ACK
         simple_sct.last_ACK = simple_sct.SEQ_ACK
         if simple_sct.SEND_WINDOW_SIZE > 3 and len(
-                simple_sct.wait_resend) / simple_sct.SEND_WINDOW_SIZE > 0.2 \
+                simple_sct.wait_resend) / simple_sct.SEND_WINDOW_SIZE > BOMB_RATE \
                 and time.time() - simple_sct.last_bomb > 4 * simple_sct.BASE_RTT + EXTRA_ACK_WAIT:
             simple_sct.SEND_WINDOW_SIZE = int(simple_sct.SEND_WINDOW_SIZE * 0.7)
             simple_sct.last_bomb = time.time()
@@ -636,7 +636,7 @@ class ServerEventLoop(EventLoop):
         if pkt.remote not in self.connections:
             self.send_loop.put(RDTPacket(remote=pkt.remote, FIN=1, ACK=1, SEQ=0, SEQ_ACK=0))
             return
-        simple_sct:SimpleRDT = self.get_simple_sct(pkt)
+        simple_sct: SimpleRDT = self.get_simple_sct(pkt)
         simple_sct.SEQ_ACK = pkt.SEQ
         if simple_sct.status.value < RDTConnectionStatus.FIN.value:
             simple_sct.status = RDTConnectionStatus.FIN_
@@ -747,7 +747,8 @@ class ClientEventLoop(EventLoop):
         if self.simple_sct.status is None:
             self.simple_sct.status = RDTConnectionStatus.SYN_ACK_
             return
-        self.cancel_timer(self.simple_sct.wait_ack.pop(0))
+        if self.simple_sct.wait_ack[0].event.body.SYN == 1:
+            self.cancel_timer(self.simple_sct.wait_ack.pop(0))
 
     def on_ack(self, pkt: RDTPacket):
         assert pkt.remote == self.simple_sct.remote

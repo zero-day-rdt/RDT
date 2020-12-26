@@ -31,7 +31,7 @@ class Server(ThreadingUDPServer):
         details: https://docs.python.org/3/library/socketserver.html
         """
         # return True
-        if self.buffer < 100000:  # some finite buffer size (in bytes) #change1
+        if self.buffer < 10000:  # some finite buffer size (in bytes) #change1
             self.buffer += len(request[0])
             return True
         else:
