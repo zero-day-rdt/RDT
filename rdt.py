@@ -156,6 +156,7 @@ class SimpleRDT(RDTSocket):
         self.vegas_status = 0  # 慢启动
         self.SEND_WINDOW_SIZE = 3  # 发送窗口大小，限制 wait_ack 的大小
         self.last_bomb = 0  # 上次强制降窗
+        self.destroy_timer = None
 
     @property
     def current_window(self):
@@ -545,9 +546,9 @@ class EventLoop(threading.Thread):
             timer = self.push_timer(simple_sct.BASE_RTT * 2 + EXTRA_ACK_WAIT, RDTEvent(RDTEventType.ACK_TIMEOUT, pkt))
             simple_sct.wait_ack.append(timer)
         if simple_sct.debug:
-            print('\033[0;36m539: 当前等待发送数据长度->', len(simple_sct.wait_send))
+            print('\033[0;36m539: 当前等待发送数据长度->', len(simple_sct.wait_send) - simple_sct.wait_send_offset)
 
-    def deal_ack_timeout(self, simple_sct: SimpleRDT, pkt):
+    def deal_ack_timeout(self, simple_sct: SimpleRDT, pkt: RDTPacket):
         timer = None
         for timer in simple_sct.wait_ack:
             if timer.event.body is pkt:
@@ -579,15 +580,18 @@ class EventLoop(threading.Thread):
     def deal_send_fin(self, skt: SimpleRDT):
         skt.SEQ += 1  # 强制加一做区分
         pkt = RDTPacket(remote=skt.remote, FIN=1, SEQ=skt.SEQ, SEQ_ACK=skt.SEQ_ACK)
-        self.send_loop.put(pkt)
+        for i in range(3):
+            self.send_loop.put(pkt)
         if skt.debug:
             print('\033[0;34m528: 发送FIN， 当前状态-> ', skt.status, '\033[0m')
         if skt.status != RDTConnectionStatus.FIN_:
             skt.status = RDTConnectionStatus.FIN
             timer = self.push_timer(skt.BASE_RTT + EXTRA_ACK_WAIT, RDTEvent(RDTEventType.ACK_TIMEOUT, pkt))
             skt.wait_ack.append(timer)
+            skt.destroy_timer = self.push_timer(skt.BASE_RTT * 16 + EXTRA_ACK_WAIT,
+                                                RDTEvent(RDTEventType.DESTROY_SIMPLE, skt))
         else:
-            self.push_timer(skt.BASE_RTT + EXTRA_ACK_WAIT, RDTEvent(RDTEventType.ACK_TIMEOUT, skt))
+            self.push_timer(skt.BASE_RTT * 2 + EXTRA_ACK_WAIT, RDTEvent(RDTEventType.DESTROY_SIMPLE, skt))
 
 
 class ServerEventLoop(EventLoop):
@@ -663,11 +667,13 @@ class ServerEventLoop(EventLoop):
         elif simple_sct.status == RDTConnectionStatus.FIN:
             if simple_sct.debug:
                 print('\033[0;33m588: FIN success', pkt.remote, '\033[0m')
+            self.cancel_timer(simple_sct.destroy_timer)
             self.send_fin_ack_pkt(simple_sct)
             self.put(RDTEventType.DESTROY_SIMPLE, simple_sct)
 
     def on_fin_ack(self, pkt: RDTPacket):
-        simple_sct = self.get_simple_sct(pkt)
+        simple_sct: SimpleRDT = self.get_simple_sct(pkt)
+        self.cancel_timer(simple_sct.destroy_timer)
         if simple_sct.status.value < RDTConnectionStatus.FIN_ACK_.value:
             simple_sct.status = RDTConnectionStatus.FIN_ACK_
         else:
@@ -780,11 +786,13 @@ class ClientEventLoop(EventLoop):
             # self.await_send_ack(self.simple_sct)
             self.await_send_fin(self.simple_sct)
         elif self.simple_sct.status == RDTConnectionStatus.FIN:
+            self.cancel_timer(self.simple_sct.destroy_timer)
             self.send_fin_ack_pkt(self.simple_sct)
             self.put(RDTEventType.DESTROY_ALL, None)
 
     def on_fin_ack(self, pkt: RDTPacket):
         assert pkt.remote == self.simple_sct.remote
+        self.cancel_timer(self.simple_sct.destroy_timer)
         if self.simple_sct.debug:
             print('\033[0;32m717: FIN_ACK 状态-> ', self.simple_sct.status, '\033[0m')
         if self.simple_sct.status.value < RDTConnectionStatus.FIN_ACK_.value:
