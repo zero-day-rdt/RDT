@@ -8,10 +8,10 @@ from math import *
 
 SEND_WAIT = 0.005  # ACK等数据的时间
 SEND_FIN_WAIT = 0.5  # 下次尝试发FIN的时间
-RTT_ = 0.95  # TR对于上次的保留系数，越小变化越剧烈
+RTT_ = 0.95  # RTT对于上次的保留系数，越小变化越剧烈
 INCREASE_ = 0  # 升窗界线
 DECREASE_ = 3  # 降窗界线
-EXTRA_ACK_WAIT = 2  # 额外的等待ACK的时间
+EXTRA_ACK_WAIT = 1.25  # 额外的等待ACK的时间
 SYN_ACK_WAIT = 5  # 等待回复SYN_ACK的时间
 MAX_PKT_LEN = 1024  # 最大包长度
 BOMB_RATE = 0.15  # 超时包长度占窗口的比例，强制降窗
@@ -137,6 +137,7 @@ class SimpleRDT(RDTSocket):
         self.wait_ack = []  # 定时器数组，可能是已经触发的定时器，发出去的包等ack，无数据且不是(SYN, SYN_ACK, FIN)的包不会等待ACK，超时了会重发
         self.timeout_cnt = 0  # 连续超时计数
         self.wait_send = bytearray()  # 上层来的等待发送的数据
+        self.wait_send_offset = 0  #
         self.wait_resend = []  # 等待窗口重发的包
         self.SEQ = send_offset  # 发出去的最后一个SEQ
         self.ack_timer = RDTTimer(0, RDTEvent(RDTEventType.ACK_TIMEOUT, None))  # ACK等数据的计时器，超时就会发空ACK出去
@@ -182,7 +183,8 @@ class SimpleRDT(RDTSocket):
                     return re
                 if self.remote_close:
                     return b''
-            time.sleep(0.00001)
+            time.sleep(0.0001)
+            # print('?')
 
     def connect(self, address: (str, int)):
         assert False, 'Duplicated connecting'
@@ -200,11 +202,11 @@ class SimpleRDT(RDTSocket):
         if self.debug:
             print('195: 计算出的differ-> ', tr_differ)
         if tr_differ > DECREASE_:
-            self.SEND_WINDOW_SIZE -= log2(self.SEND_WINDOW_SIZE) / max(self.SEND_WINDOW_SIZE / 3, 1)
+            self.SEND_WINDOW_SIZE -= min(0.8, log(self.SEND_WINDOW_SIZE) / max(self.SEND_WINDOW_SIZE / 3, 1))
         elif tr_differ < INCREASE_:
-            self.SEND_WINDOW_SIZE += 1 / max(1.0, log2(self.SEND_WINDOW_SIZE))
+            self.SEND_WINDOW_SIZE += 1 / max(1.0, log(self.SEND_WINDOW_SIZE))
         else:
-            self.SEND_WINDOW_SIZE += log2(self.SEND_WINDOW_SIZE + 1) / self.SEND_WINDOW_SIZE
+            self.SEND_WINDOW_SIZE += log(self.SEND_WINDOW_SIZE + 1) / self.SEND_WINDOW_SIZE
         self.BASE_RTT = self.BASE_RTT * RTT_ + (1 - RTT_) * RTT
         if self.debug:
             print('201: 更新后WINDOW->', self.SEND_WINDOW_SIZE, '\033[0m')
@@ -443,7 +445,8 @@ class EventLoop(threading.Thread):
 
     def deal_ack(self, simple_sct: SimpleRDT, pkt: RDTPacket):
         if simple_sct.debug:
-            print('\033[0;36m446: SEQ of pkt ->', pkt.SEQ, 'SEQ_ACK of pkt ->', pkt.SEQ_ACK)
+            print('\033[0;36m446: SEQ of pkt ->', pkt.SEQ, 'SEQ_ACK of pkt ->', pkt.SEQ_ACK, '当前 SEQ_ACK->',
+                  simple_sct.SEQ_ACK, '当前 SEQ->', simple_sct.SEQ)
         # 处理 ACK
         self.pop_wait_ack(simple_sct, pkt)
         # 窗口可能空了，去发数据
@@ -454,7 +457,8 @@ class EventLoop(threading.Thread):
         ACK, SEQ_SAK = simple_sct.deal_recv_data(pkt)
         if ACK:
             if simple_sct.debug:
-                print('\033[0;32m456: ACK-> SEQ_ACK=', simple_sct.SEQ_ACK, '\033[0m')
+                print('\033[0;32m456: ACK-> SEQ_ACK=', simple_sct.SEQ_ACK, '待收data 长度->', len(simple_sct.data),
+                      '\033[0m')
             self.await_send_ack(simple_sct)
         elif SEQ_SAK != 0:
             if simple_sct.debug:
@@ -499,6 +503,8 @@ class EventLoop(threading.Thread):
                 if not timer.active:
                     simple_sct.wait_resend.remove(timer)
                 self.cancel_timer(simple_sct.wait_ack.pop(0))
+                if timer.event.body.FIN == 1:
+                    self.put(RDTEventType.DESTROY_SIMPLE, simple_sct)
                 RTT = time.time() - timer.start_time
                 simple_sct.deal_RTT(RTT)
                 break
@@ -506,33 +512,40 @@ class EventLoop(threading.Thread):
                 break
 
     def deal_resend(self, simple_sct: SimpleRDT):
-        while simple_sct.current_window < simple_sct.SEND_WINDOW_SIZE and len(simple_sct.wait_resend) > 0:
+        while simple_sct.current_window + 1 < simple_sct.SEND_WINDOW_SIZE and len(simple_sct.wait_resend) > 0:
             timer: RDTTimer = simple_sct.wait_resend.pop(0)
             timer.start_time = time.time()
             timer.target_time = timer.start_time + simple_sct.BASE_RTT * 2 + EXTRA_ACK_WAIT
             timer.active = True
             if simple_sct.debug:
                 print('\033[0;33m523: 重发包, SEQ=', timer.event.body.SEQ, '当前占用->', simple_sct.current_window,
-                      '窗口-> ', simple_sct.SEND_WINDOW_SIZE, ' RTT-> ', simple_sct.BASE_RTT, '\033[0m')
+                      '窗口-> ', simple_sct.SEND_WINDOW_SIZE, '当前等待重发->', len(simple_sct.wait_resend), ' RTT-> ',
+                      simple_sct.BASE_RTT, '\033[0m')
             self.push_raw_timer(timer)
             self.send_loop.put(timer.event.body)
 
-    def deal_send(self, simple_sct, bs):
+    def deal_send(self, simple_sct: SimpleRDT, bs: bytes):
         simple_sct.wait_send.extend(bs)
         self.deal_resend(simple_sct)
         while simple_sct.current_window < simple_sct.SEND_WINDOW_SIZE:
-            if len(simple_sct.wait_send) == 0:
+            if len(simple_sct.wait_send) == 0 or simple_sct.wait_send_offset >= len(simple_sct.wait_send):
                 break
             pkt = RDTPacket(remote=simple_sct.remote, ACK=1, SEQ=simple_sct.SEQ, SEQ_ACK=simple_sct.SEQ_ACK,
-                            PAYLOAD=simple_sct.wait_send[:MAX_PKT_LEN])
+                            PAYLOAD=simple_sct.wait_send[
+                                    simple_sct.wait_send_offset:simple_sct.wait_send_offset + MAX_PKT_LEN])
             self.send_loop.put(pkt)
             simple_sct.SEQ += pkt.LEN
             simple_sct.last_ACK = simple_sct.SEQ_ACK
-            simple_sct.wait_send = simple_sct.wait_send[MAX_PKT_LEN:]
+            simple_sct.wait_send_offset += MAX_PKT_LEN
+            if simple_sct.wait_send_offset >= len(simple_sct.wait_send):
+                simple_sct.wait_send.clear()
+                simple_sct.wait_send_offset = 0
             if self.socket.debug:
                 print('\033[0;33m 535: 发送包 SEQ->', pkt.SEQ)
-            timer = self.push_timer(simple_sct.BASE_RTT * 4 + EXTRA_ACK_WAIT, RDTEvent(RDTEventType.ACK_TIMEOUT, pkt))
+            timer = self.push_timer(simple_sct.BASE_RTT * 2 + EXTRA_ACK_WAIT, RDTEvent(RDTEventType.ACK_TIMEOUT, pkt))
             simple_sct.wait_ack.append(timer)
+        if simple_sct.debug:
+            print('\033[0;36m539: 当前等待发送数据长度->', len(simple_sct.wait_send))
 
     def deal_ack_timeout(self, simple_sct: SimpleRDT, pkt):
         timer = None
@@ -544,7 +557,7 @@ class EventLoop(threading.Thread):
         simple_sct.last_ACK = simple_sct.SEQ_ACK
         if simple_sct.SEND_WINDOW_SIZE > 3 and len(
                 simple_sct.wait_resend) / simple_sct.SEND_WINDOW_SIZE > BOMB_RATE \
-                and time.time() - simple_sct.last_bomb > 4 * simple_sct.BASE_RTT + EXTRA_ACK_WAIT:
+                and time.time() - simple_sct.last_bomb > 2 * simple_sct.BASE_RTT + EXTRA_ACK_WAIT:
             simple_sct.SEND_WINDOW_SIZE = int(simple_sct.SEND_WINDOW_SIZE * 0.7)
             simple_sct.last_bomb = time.time()
             if simple_sct.debug:
@@ -574,7 +587,7 @@ class EventLoop(threading.Thread):
             timer = self.push_timer(skt.BASE_RTT + EXTRA_ACK_WAIT, RDTEvent(RDTEventType.ACK_TIMEOUT, pkt))
             skt.wait_ack.append(timer)
         else:
-            self.push_timer(skt.BASE_RTT + EXTRA_ACK_WAIT, RDTEvent(RDTEventType.DESTROY_SIMPLE, skt))
+            self.push_timer(skt.BASE_RTT + EXTRA_ACK_WAIT, RDTEvent(RDTEventType.ACK_TIMEOUT, skt))
 
 
 class ServerEventLoop(EventLoop):
@@ -602,9 +615,10 @@ class ServerEventLoop(EventLoop):
         remote = pkt.remote
         if remote in self.connections:
             simple_sct = self.connections[remote]
-            simple_sct.SEQ_ACK = max(simple_sct.SEQ_ACK, pkt.SEQ+pkt.LEN)
+            simple_sct.SEQ_ACK = max(simple_sct.SEQ_ACK, pkt.SEQ + pkt.LEN)
             syn_ack_pkt = RDTPacket(SYN=1, ACK=1, remote=remote, SEQ=simple_sct.SEQ, SEQ_ACK=simple_sct.SEQ_ACK)
             self.send_loop.put(syn_ack_pkt)
+            return
         elif self.__is_close:
             self.send_loop.put(RDTPacket(remote=pkt.remote, SEQ=0, SEQ_ACK=0, RST=1))
             return
@@ -775,8 +789,6 @@ class ClientEventLoop(EventLoop):
             print('\033[0;32m717: FIN_ACK 状态-> ', self.simple_sct.status, '\033[0m')
         if self.simple_sct.status.value < RDTConnectionStatus.FIN_ACK_.value:
             self.simple_sct.status = RDTConnectionStatus.FIN_ACK_
-        else:
-            return
         self.put(RDTEventType.DESTROY_ALL, None)
 
     def on_send(self, body: ((str, int), bytes)):

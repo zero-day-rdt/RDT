@@ -2,7 +2,7 @@ from rdt import RDTSocket
 import time
 
 if __name__=='__main__':
-    server = RDTSocket()
+    server = RDTSocket(debug=False)
     server.bind(('127.0.0.1', 9999))
 
     while True:

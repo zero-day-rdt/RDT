@@ -72,7 +72,7 @@ class Server(ThreadingUDPServer):
         dara = bytearray(data)
         print(client_address, to)  # observe tht traffic
         for i in range(len(data[8:])):
-            if random.random() < 0.00001:
+            if random.random() < 0.00005:
                 dara[i + 8] = data[i + 8] ^ 0x7F
                 print('corruption')
         socket.sendto(addr_to_bytes(client_address) + dara[8:], to)
