@@ -1,8 +1,9 @@
 from rdt import RDTSocket
 import time
+from Cons import RATE
 
-if __name__=='__main__':
-    server = RDTSocket()
+if __name__ == '__main__':
+    server = RDTSocket(rate=RATE)
     server.bind(('127.0.0.1', 1777))
 
     while True:
@@ -18,4 +19,4 @@ if __name__=='__main__':
         make sure the following is reachable
         '''
         conn.close()
-        print(f'connection finished in {time.perf_counter()-start}s')
+        print(f'connection finished in {time.perf_counter() - start}s')

@@ -1,15 +1,16 @@
+from Cons import *
 from rdt import RDTSocket
 import time
 from difflib import Differ
 
-client = RDTSocket(debug=True)
+client = RDTSocket(debug=True, rate=RATE)
 client.connect(('127.0.0.1', 9999))
 
 data_count = 0
 echo = b''
-count = 3
+count = CNT
 
-with open('alice.txt', 'rb') as f:
+with open(FILE, 'rb') as f:
     data = f.read()
     encoded = data
     assert len(data) == len(encoded)
@@ -37,7 +38,7 @@ make sure the following is reachable
 
 print(f'transmitted {data_count * 2}bytes in {time.perf_counter() - start}s')
 print(f'tr = {data_count * 2 / (time.perf_counter() - start) / 1000} KB/s\n')
-client.save_perf('10K_nc_nl_3k.json')
+client.save_perf('100K_c_l_10k.json')
 diff = Differ().compare((data * count).splitlines(keepends=True), echo.splitlines(keepends=True))
 for line in diff:
     assert line.startswith('  ')  # check if data is correctly echoed

@@ -577,7 +577,7 @@ class EventLoop(threading.Thread):
         simple_sct.last_ACK = simple_sct.SEQ_ACK
         if simple_sct.SEND_WINDOW_SIZE > 3 and index / simple_sct.SEND_WINDOW_SIZE > BOMB_RATE \
                 and time.time() - simple_sct.last_bomb > 2 * simple_sct.BASE_RTT + EXTRA_ACK_WAIT:
-            simple_sct.SEND_WINDOW_SIZE = simple_sct.SEND_WINDOW_SIZE * 0.6
+            simple_sct.SEND_WINDOW_SIZE = simple_sct.SEND_WINDOW_SIZE * 0.65
             simple_sct.last_bomb = time.time()
             if simple_sct.debug:
                 print('\033[0;33m538: 降窗->', simple_sct.SEND_WINDOW_SIZE)

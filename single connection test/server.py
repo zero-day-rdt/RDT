@@ -1,8 +1,9 @@
+from Cons import RATE
 from rdt import RDTSocket
 import time
 
 if __name__=='__main__':
-    server = RDTSocket(debug=False)
+    server = RDTSocket(debug=False, rate=RATE)
     server.bind(('127.0.0.1', 9999))
 
     while True:

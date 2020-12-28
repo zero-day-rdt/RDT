@@ -1,15 +1,16 @@
 from rdt import RDTSocket
 import time
 from difflib import Differ
+from Cons import RATE, FILE, CNT
 
-client = RDTSocket()
+client = RDTSocket(rate=RATE)
 client.connect(('127.0.0.1', 1777))
 
 data_count = 0
 echo = b''
-count = 3
+count = CNT
 
-with open('alice.txt', 'r') as f:
+with open(FILE, 'r') as f:
     data = f.read()
     encoded = data.encode()
     assert len(data) == len(encoded)

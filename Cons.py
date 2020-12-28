@@ -1,0 +1,6 @@
+RATE = 10000
+LOSS = 0.0
+CORRUPTION = 0.00000
+BUFFER = 50000
+FILE = 'alice.txt'
+CNT = 3

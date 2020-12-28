@@ -2,6 +2,7 @@ from socket import inet_aton, inet_ntoa
 import random, time
 import threading
 from socketserver import ThreadingUDPServer
+from Cons import *
 
 lock = threading.Lock()
 
@@ -31,7 +32,7 @@ class Server(ThreadingUDPServer):
         details: https://docs.python.org/3/library/socketserver.html
         """
         # return True
-        if self.buffer < 3000:  # some finite buffer size (in bytes) #change1
+        if self.buffer < BUFFER:  # some finite buffer size (in bytes) #change1
             self.buffer += len(request[0])
             return True
         else:
@@ -42,7 +43,7 @@ class Server(ThreadingUDPServer):
         data, socket = request
 
         with lock:
-            # if random.random() < 0.1:#change1
+            # if random.random() < LOSS:#change1
             #     self.buffer -= len(data)
             #     return
             if self.rate:
@@ -72,7 +73,7 @@ class Server(ThreadingUDPServer):
         dara = bytearray(data)
         print(client_address, to)  # observe tht traffic
         # for i in range(len(data[8:])):
-        #     if random.random() < 0.00005:
+        #     if random.random() < CORRUPTION:
         #         dara[i + 8] = data[i + 8] ^ 0x7F
         #         print('corruption')
         socket.sendto(addr_to_bytes(client_address) + dara[8:], to)
@@ -81,5 +82,5 @@ class Server(ThreadingUDPServer):
 server_address = ('127.0.0.1', 12345)
 
 if __name__ == '__main__':
-    with Server(server_address, rate=10000) as server: #change1
+    with Server(server_address, rate=RATE) as server: #change1
         server.serve_forever()
