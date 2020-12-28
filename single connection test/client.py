@@ -2,7 +2,7 @@ from rdt import RDTSocket
 import time
 from difflib import Differ
 
-client = RDTSocket(debug=False)
+client = RDTSocket(debug=True)
 client.connect(('127.0.0.1', 9999))
 
 data_count = 0
@@ -37,7 +37,7 @@ make sure the following is reachable
 
 print(f'transmitted {data_count * 2}bytes in {time.perf_counter() - start}s')
 print(f'tr = {data_count * 2 / (time.perf_counter() - start) / 1000} KB/s\n')
-print(data * count == echo)
+client.save_perf('10K_nc_nl_3k.json')
 diff = Differ().compare((data * count).splitlines(keepends=True), echo.splitlines(keepends=True))
 for line in diff:
     assert line.startswith('  ')  # check if data is correctly echoed

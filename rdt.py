@@ -5,6 +5,7 @@ import time
 import threading
 from queue import SimpleQueue, Empty
 from math import *
+import json
 
 SEND_WAIT = 0.005  # ACK等数据的时间
 SEND_FIN_WAIT = 0.5  # 下次尝试发FIN的时间
@@ -128,6 +129,9 @@ class RDTSocket(UnreliableSocket):
     def block_until_close(self):
         self._event_loop.join()
 
+    def save_perf(self, path: str):
+        self.simple_sct.save_perf(path)
+
 
 class SimpleRDT(RDTSocket):
 
@@ -157,6 +161,7 @@ class SimpleRDT(RDTSocket):
         self.SEND_WINDOW_SIZE = 3  # 发送窗口大小，限制 wait_ack 的大小
         self.last_bomb = 0  # 上次强制降窗
         self.destroy_timer = None
+        self.perf = []
 
     @property
     def current_window(self):
@@ -211,6 +216,11 @@ class SimpleRDT(RDTSocket):
         self.BASE_RTT = self.BASE_RTT * RTT_ + (1 - RTT_) * RTT
         if self.debug:
             print('201: 更新后WINDOW->', self.SEND_WINDOW_SIZE, '\033[0m')
+            self.perf.append({
+                'BASE-RTT': self.BASE_RTT,
+                'RTT': RTT,
+                'WINDOW': self.SEND_WINDOW_SIZE
+            })
 
     def deal_recv_data(self, pkt: RDTPacket) -> (bool, int):
         if pkt.SEQ == self.SEQ_ACK:
@@ -237,6 +247,10 @@ class SimpleRDT(RDTSocket):
             return False, pkt.SEQ
         else:
             return False, 0
+
+    def save_perf(self, path: str):
+        with open(path, 'w') as f:
+            json.dump(self.perf, f)
 
 
 class EventLoop(threading.Thread):
@@ -422,7 +436,8 @@ class EventLoop(threading.Thread):
         try:
             self.timers.remove(_)
         except Exception as ev:
-            print('\033[0;33m426: Exception->', ev)
+            if self.socket.debug:
+                print('\033[0;33m426: Exception->', ev, '\033[0m')
 
     def send_sak_pkt(self, seq_sak: int, sct: SimpleRDT):
         sak_pkt = RDTPacket(SAK=1, SEQ=seq_sak, remote=sct.remote, SEQ_ACK=sct.SEQ_ACK)
@@ -550,16 +565,19 @@ class EventLoop(threading.Thread):
 
     def deal_ack_timeout(self, simple_sct: SimpleRDT, pkt: RDTPacket):
         timer = None
-        for timer in simple_sct.wait_ack:
-            if timer.event.body is pkt:
+        index = 0
+        for i in range(len(simple_sct.wait_ack)):
+            _timer: RDTTimer = simple_sct.wait_ack[i]
+            if _timer.event.body is pkt:
+                timer = _timer
+                index = i
                 break
         assert timer is not None, 'Can not find timer'
         pkt.SEQ_ACK = simple_sct.SEQ_ACK
         simple_sct.last_ACK = simple_sct.SEQ_ACK
-        if simple_sct.SEND_WINDOW_SIZE > 3 and len(
-                simple_sct.wait_resend) / simple_sct.SEND_WINDOW_SIZE > BOMB_RATE \
+        if simple_sct.SEND_WINDOW_SIZE > 3 and index / simple_sct.SEND_WINDOW_SIZE > BOMB_RATE \
                 and time.time() - simple_sct.last_bomb > 2 * simple_sct.BASE_RTT + EXTRA_ACK_WAIT:
-            simple_sct.SEND_WINDOW_SIZE = int(simple_sct.SEND_WINDOW_SIZE * 0.7)
+            simple_sct.SEND_WINDOW_SIZE = simple_sct.SEND_WINDOW_SIZE * 0.6
             simple_sct.last_bomb = time.time()
             if simple_sct.debug:
                 print('\033[0;33m538: 降窗->', simple_sct.SEND_WINDOW_SIZE)
