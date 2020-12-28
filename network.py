@@ -31,13 +31,13 @@ class Server(ThreadingUDPServer):
         if this function returns False， the request will not be processed, i.e. is discarded.
         details: https://docs.python.org/3/library/socketserver.html
         """
-        # return True
-        if self.buffer < BUFFER:  # some finite buffer size (in bytes) #change1
-            self.buffer += len(request[0])
-            return True
-        else:
-            print('爆炸了')
-            return False
+        return True
+        # if self.buffer < BUFFER:  # some finite buffer size (in bytes) #change1
+        #     self.buffer += len(request[0])
+        #     return True
+        # else:
+        #     print('爆炸了')
+        #     return False
 
     def finish_request(self, request, client_address):
         data, socket = request
@@ -46,9 +46,9 @@ class Server(ThreadingUDPServer):
             # if random.random() < LOSS:#change1
             #     self.buffer -= len(data)
             #     return
-            if self.rate:
-                time.sleep(len(data) / self.rate)
-            self.buffer -= len(data)
+            # if self.rate:
+            #     time.sleep(len(data) / self.rate)
+            # self.buffer -= len(data)
             """
             blockingly process each request
             you can add random loss/corrupt here
@@ -82,5 +82,5 @@ class Server(ThreadingUDPServer):
 server_address = ('127.0.0.1', 12345)
 
 if __name__ == '__main__':
-    with Server(server_address, rate=RATE) as server: #change1
+    with Server(server_address) as server: #change1
         server.serve_forever()
