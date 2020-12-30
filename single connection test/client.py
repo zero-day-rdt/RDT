@@ -4,7 +4,7 @@ import time
 from difflib import Differ
 
 client = RDTSocket(debug=DEBUG, rate=RATE)
-client.bind(('127.0.0.1',9999))
+client.bind(('127.0.0.1', 9998))
 client.connect(('127.0.0.1', 9999))
 
 data_count = 0
