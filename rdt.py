@@ -575,7 +575,7 @@ class EventLoop(threading.Thread):
         assert timer is not None, 'Can not find timer'
         pkt.SEQ_ACK = simple_sct.SEQ_ACK
         simple_sct.last_ACK = simple_sct.SEQ_ACK
-        if simple_sct.SEND_WINDOW_SIZE > 3 and index / simple_sct.SEND_WINDOW_SIZE > BOMB_RATE \
+        if simple_sct.SEND_WINDOW_SIZE > 1.6 and index / simple_sct.SEND_WINDOW_SIZE > BOMB_RATE \
                 and time.time() - simple_sct.last_bomb > 2 * simple_sct.BASE_RTT + EXTRA_ACK_WAIT:
             simple_sct.SEND_WINDOW_SIZE = simple_sct.SEND_WINDOW_SIZE * 0.65
             simple_sct.last_bomb = time.time()
@@ -596,8 +596,8 @@ class EventLoop(threading.Thread):
         self.send_loop.put(pkt)
 
     def deal_send_fin(self, skt: SimpleRDT):
+        pkt = RDTPacket(remote=skt.remote, FIN=1, SEQ=skt.SEQ, SEQ_ACK=skt.SEQ_ACK, PAYLOAD=bytes(1))
         skt.SEQ += 1  # 强制加一做区分
-        pkt = RDTPacket(remote=skt.remote, FIN=1, SEQ=skt.SEQ, SEQ_ACK=skt.SEQ_ACK)
         for i in range(3):
             self.send_loop.put(pkt)
         if skt.debug:
@@ -675,7 +675,7 @@ class ServerEventLoop(EventLoop):
             self.send_loop.put(RDTPacket(remote=pkt.remote, FIN=1, ACK=1, SEQ=0, SEQ_ACK=0))
             return
         simple_sct: SimpleRDT = self.get_simple_sct(pkt)
-        simple_sct.SEQ_ACK = pkt.SEQ
+        simple_sct.SEQ_ACK = pkt.SEQ + pkt.LEN
         if simple_sct.status.value < RDTConnectionStatus.FIN.value:
             simple_sct.status = RDTConnectionStatus.FIN_
             if simple_sct.debug:
@@ -799,6 +799,7 @@ class ClientEventLoop(EventLoop):
 
     def on_fin(self, pkt: RDTPacket):
         assert pkt.remote == self.simple_sct.remote
+        self.simple_sct.SEQ_ACK = pkt.SEQ + pkt.LEN
         if self.simple_sct.status.value < RDTConnectionStatus.FIN.value:
             self.simple_sct.status = RDTConnectionStatus.FIN_
             # self.await_send_ack(self.simple_sct)
